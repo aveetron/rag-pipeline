@@ -9,4 +9,4 @@
 - **Vectorization**: Converts data into vectors.
 - **Vector Store**: Stores the vectors.
 - **Query Processing**: Processes user queries.
-- **Response Generation**: Generates responses using the retrieved data.# rag-pipeline
+- **Response Generation**: Generates responses using the retrieved data
