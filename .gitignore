@@ -14,3 +14,4 @@ wheels/
 ollama_storage/
 postgres_data/
 qdrant_storage/
+data/uploads/

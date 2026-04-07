@@ -3,7 +3,8 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
-from app.messaging import RabbitMQConsumer, RabbitMQProducer, default_incoming_handler
+from app.handler import handle_ingestion_message
+from app.messaging import RabbitMQConsumer, RabbitMQProducer
 from app.routers import health
 from app.routers import upload
 from config.rabbitmq import close_connection, create_connection
@@ -24,7 +25,7 @@ async def lifespan(app: FastAPI):
         connection,
         settings.exchange_name,
         settings.rabbitmq_queue_name,
-        default_incoming_handler,
+        handle_ingestion_message,
     )
     await consumer.setup()
     await consumer.start()

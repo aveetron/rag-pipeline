@@ -1,24 +1,69 @@
-from pydantic import BaseModel
-from pydantic import Field
-from typing import Optional
-from fastapi import UploadFile
-from pydantic import field_validator
+import uuid
+from pathlib import Path
+from typing import Any
 
-class UploadRequest(BaseModel):
-  # file can be null
-  file: Optional[UploadFile] = Field(default=None, description="The file to upload")
-  website_url: Optional[str] = Field(default=None, description="The URL of the website to upload")
-  text: Optional[str] = Field(default=None, description="The text to upload")
-  database_url: Optional[str] = Field(default=None, description="The URL of the database to upload")
+from fastapi import HTTPException, UploadFile
 
-  """
-  Either file, website_url, text, or database_url must be provided.
-  If multiple are provided, the file will be used.
-  If no file is provided, the website_url, text, or database_url will be used.
-  If no website_url, text, or database_url is provided, an error will be returned.
-  """
-  @field_validator("file", "website_url", "text", "database_url")
-  def validate_required_fields(cls, v, values):
-    if v is None and all(values.values()):
-      raise ValueError("Either file, website_url, text, or database_url must be provided")
-    return v
+
+def ensure_at_least_one_source(
+    *,
+    file: UploadFile | None,
+    website_url: str | None,
+    text: str | None,
+    database_url: str | None,
+) -> None:
+    has_file = file is not None and bool(file.filename)
+    if not any([has_file, website_url, text, database_url]):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide a PDF file, website_url, text, or database_url.",
+        )
+
+
+def ensure_pdf(file: UploadFile) -> None:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Uploaded file must have a filename.")
+    name = file.filename.lower()
+    if not name.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    ct = (file.content_type or "").lower()
+    if ct and "pdf" not in ct and ct not in ("application/octet-stream", "binary/octet-stream"):
+        raise HTTPException(
+            status_code=400,
+            detail="File must be a PDF (wrong content type).",
+        )
+
+
+async def build_ingest_payload(
+    *,
+    file: UploadFile | None,
+    website_url: str | None,
+    text: str | None,
+    database_url: str | None,
+    upload_dir: Path,
+    max_bytes: int,
+) -> dict[str, Any]:
+    """Build JSON-serializable payload for the ingestion queue."""
+    payload: dict[str, Any] = {}
+    if file is not None and file.filename:
+        ensure_pdf(file)
+        data = await file.read()
+        if len(data) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds maximum size of {max_bytes} bytes.",
+            )
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        dest = upload_dir / f"{uuid.uuid4().hex}.pdf"
+        dest.write_bytes(data)
+        payload["source"] = "pdf"
+        payload["stored_path"] = str(dest.resolve())
+        payload["original_filename"] = file.filename
+        payload["size_bytes"] = len(data)
+    if website_url:
+        payload["website_url"] = website_url
+    if text:
+        payload["text"] = text
+    if database_url:
+        payload["database_url"] = database_url
+    return payload
