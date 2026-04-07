@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import shutil
 
 import uvicorn
 from fastapi import FastAPI
@@ -36,6 +37,8 @@ async def lifespan(app: FastAPI):
     await consumer.stop()
     await producer.close()
     await close_connection(connection)
+    # delete upload directory
+    shutil.rmtree(get_settings().upload_dir)
 
 
 app = FastAPI(lifespan=lifespan)
