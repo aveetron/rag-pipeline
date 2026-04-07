@@ -7,6 +7,8 @@ from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from app.handler.embedding import execute_embedding
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,7 +47,6 @@ async def handle_ingestion_message(message: AbstractIncomingMessage) -> None:
                 logger.error("ingestion path is not a file or directory: %s", path)
                 return
             chunks = split_into_chunks(documents)
-            print("chunks", chunks)
             logger.info(
                 "ingestion pdf split into %s chunks (from %s docs)",
                 len(chunks),
@@ -53,6 +54,10 @@ async def handle_ingestion_message(message: AbstractIncomingMessage) -> None:
             )
             if chunks:
                 logger.debug("first chunk preview: %s", chunks[0].page_content[:200])
+            
+            embeddings = await execute_embedding(chunks)
+            print(embeddings)
+            logger.debug("embeddings shape %s", getattr(embeddings, "shape", None))
 
         # TODO: enqueue RAG pipeline (chunk, embed, index) from payload
 
