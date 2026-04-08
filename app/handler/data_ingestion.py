@@ -1,7 +1,6 @@
 import json
 import logging
 from pathlib import Path
-import uuid
 
 from aio_pika.abc import AbstractIncomingMessage
 from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader
@@ -31,7 +30,10 @@ async def handle_ingestion_message(message: AbstractIncomingMessage) -> None:
             message.routing_key,
             payload,
         )
+
+        chunks: list[Document] = []
         embeddings = None
+
         if payload.get("source") == "pdf":
             path = Path(payload["stored_path"])
             if not path.exists():
@@ -56,17 +58,15 @@ async def handle_ingestion_message(message: AbstractIncomingMessage) -> None:
             if chunks:
                 logger.debug("first chunk preview: %s", chunks[0].page_content[:200])
 
-        if chunks: 
+        if chunks:
             embeddings = await execute_embedding(chunks)
             print(embeddings)
             logger.debug("embeddings shape %s", getattr(embeddings, "shape", None))
         else:
             logger.warning("no chunks to embed")
-        """
-            store into qdrant database as collection
-        """
-        if embeddings:
-            # colleciton name would be a uuid
+
+        # TODO: store into Qdrant as a collection (collection name e.g. uuid)
+        if embeddings is not None and len(embeddings) > 0:
             pass
 
         # TODO: enqueue RAG pipeline (chunk, embed, index) from payload

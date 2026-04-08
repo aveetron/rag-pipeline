@@ -1,4 +1,5 @@
 import json
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
@@ -13,11 +14,14 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 
 @router.post("", summary="Upload PDF and/or text metadata to the pipeline (multipart/form-data)")
 async def upload(
-    producer: RabbitMQProducer = Depends(get_rabbitmq_producer),
-    file: UploadFile | None = File(default=None, description="PDF file to ingest"),
-    website_url: str | None = Form(default=None),
-    text: str | None = Form(default=None),
-    database_url: str | None = Form(default=None),
+    producer: Annotated[RabbitMQProducer, Depends(get_rabbitmq_producer)],
+    file: Annotated[
+        UploadFile | None,
+        File(description="PDF file to ingest"),
+    ] = None,
+    website_url: Annotated[str | None, Form()] = None,
+    text: Annotated[str | None, Form()] = None,
+    database_url: Annotated[str | None, Form()] = None,
 ) -> ApiResponse:
     ensure_at_least_one_source(
         file=file,

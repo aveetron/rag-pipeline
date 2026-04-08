@@ -12,7 +12,6 @@ class Settings(BaseSettings):
         extra="ignore",
         populate_by_name=True,
     )
-    
     rabbitmq_host: str = "localhost"
     rabbitmq_port: int = 5672
     rabbitmq_user: str = "guest"
