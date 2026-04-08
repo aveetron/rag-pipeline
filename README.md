@@ -11,6 +11,16 @@
 - **Query Processing**: Processes user queries.
 - **Response Generation**: Generates responses using the retrieved data
 
+## Run the project
+
+From the repository root:
+
+```bash
+make dev
+```
+
+This starts Docker Compose dependencies in the background, waits briefly, then runs the API with **Uvicorn** and `--reload` at `http://127.0.0.1:8000` (see the [`Makefile`](Makefile) for the exact command).
+
 ## Query API (streaming)
 
 RAG answers are streamed over **Server-Sent Events** (SSE). Use this endpoint when you want token-by-token output (not a single JSON body at the end).
