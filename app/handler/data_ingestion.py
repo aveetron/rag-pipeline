@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+import uuid
 from pathlib import Path
 
 from aio_pika.abc import AbstractIncomingMessage
@@ -8,6 +10,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.handler.embedding import execute_embedding
+from config.qdrant import create_collection_for_ingestion, upsert_chunk_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,9 @@ async def handle_ingestion_message(message: AbstractIncomingMessage) -> None:
             message.routing_key,
             payload,
         )
+
+        chunks: list[Document] = []
+        embeddings = None
 
         if payload.get("source") == "pdf":
             path = Path(payload["stored_path"])
@@ -54,12 +60,32 @@ async def handle_ingestion_message(message: AbstractIncomingMessage) -> None:
             )
             if chunks:
                 logger.debug("first chunk preview: %s", chunks[0].page_content[:200])
-            
-            embeddings = await execute_embedding(chunks)
-            print(embeddings)
-            logger.debug("embeddings shape %s", getattr(embeddings, "shape", None))
 
-        # TODO: enqueue RAG pipeline (chunk, embed, index) from payload
+        if chunks:
+            embeddings = await execute_embedding(chunks)
+            logger.debug("embeddings shape %s", getattr(embeddings, "shape", None))
+        else:
+            logger.warning("no chunks to embed")
+
+        if embeddings is not None and len(embeddings) > 0:
+            collection_name = str(uuid.uuid4())
+            vector_size = int(embeddings.shape[1])
+            await asyncio.to_thread(
+                create_collection_for_ingestion,
+                collection_name,
+                vector_size,
+            )
+            await asyncio.to_thread(
+                upsert_chunk_embeddings,
+                collection_name,
+                embeddings,
+                chunks,
+            )
+            logger.info(
+                "qdrant indexed %s vectors in collection %s",
+                len(embeddings),
+                collection_name,
+            )
 
 
 def split_into_chunks(

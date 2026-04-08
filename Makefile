@@ -1,8 +1,7 @@
 .PHONY: dev
 
 dev:
-	docker-up
-	docker exec -it ollama ollama pull phi3:mini
+	docker compose up -d && sleep 5 && uvicorn main:app --reload
 
 docker-up:
 	docker compose up -d
