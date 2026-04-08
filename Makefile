@@ -3,6 +3,7 @@
 dev:
 	docker-up
 	docker exec -it ollama ollama pull phi3:mini
+	uvicorn main:app --reload
 
 docker-up:
 	docker compose up -d
