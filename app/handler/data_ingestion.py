@@ -3,9 +3,14 @@ import json
 import logging
 import uuid
 from pathlib import Path
+from typing import Callable, Awaitable
 
 from aio_pika.abc import AbstractIncomingMessage
-from langchain_community.document_loaders import DirectoryLoader, PyMuPDFLoader
+from langchain_community.document_loaders import (
+    DirectoryLoader,
+    PyMuPDFLoader,
+    WebBaseLoader,
+)
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -14,95 +19,120 @@ from config.qdrant import create_collection_for_ingestion, upsert_chunk_embeddin
 
 logger = logging.getLogger(__name__)
 
+# ── Source loader type ────────────────────────────────────────────────────────
+# Each loader receives the raw payload dict and returns a list of Documents.
+# Raise ValueError to signal a bad/missing field — the dispatcher will log it.
+SourceLoader = Callable[[dict], Awaitable[list[Document]] | list[Document]]
 
-async def handle_ingestion_message(message: AbstractIncomingMessage) -> None:
-    async with message.process():
-        raw = message.body.decode("utf-8", errors="replace")
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.info(
-                "ingestion rk=%s non_json_body=%s",
-                message.routing_key,
-                raw[:500],
-            )
-            return
 
-        logger.info(
-            "ingestion rk=%s payload=%s",
-            message.routing_key,
-            payload,
-        )
+# ── Loader implementations ────────────────────────────────────────────────────
 
-        chunks: list[Document] = []
-        embeddings = None
+def _load_pdf(payload: dict) -> list[Document]:
+    path = Path(payload["stored_path"])
+    if not path.exists():
+        raise ValueError(f"pdf path missing: {path}")
+    if path.is_file():
+        return PyMuPDFLoader(str(path)).load()
+    if path.is_dir():
+        return DirectoryLoader(str(path), loader_cls=PyMuPDFLoader).load()
+    raise ValueError(f"path is neither file nor directory: {path}")
 
-        if payload.get("source") == "pdf":
-            path = Path(payload["stored_path"])
-            if not path.exists():
-                logger.error("ingestion pdf path missing: %s", path)
-                return
-            if path.is_file():
-                documents = PyMuPDFLoader(str(path)).load()
-            elif path.is_dir():
-                documents = DirectoryLoader(
-                    str(path),
-                    loader_cls=PyMuPDFLoader,
-                ).load()
-            else:
-                logger.error("ingestion path is not a file or directory: %s", path)
-                return
-            chunks = split_into_chunks(documents)
-            logger.info(
-                "ingestion pdf split into %s chunks (from %s docs)",
-                len(chunks),
-                len(documents),
-            )
-            if chunks:
-                logger.debug("first chunk preview: %s", chunks[0].page_content[:200])
 
-        if chunks:
-            embeddings = await execute_embedding(chunks)
-            logger.debug("embeddings shape %s", getattr(embeddings, "shape", None))
-        else:
-            logger.warning("no chunks to embed")
+def _load_text(payload: dict) -> list[Document]:
+    text = payload.get("text")
+    if not text:
+        raise ValueError("'text' field is missing or empty")
+    return [Document(page_content=text)]
 
-        if embeddings is not None and len(embeddings) > 0:
-            collection_name = str(uuid.uuid4())
-            vector_size = int(embeddings.shape[1])
-            await asyncio.to_thread(
-                create_collection_for_ingestion,
-                collection_name,
-                vector_size,
-            )
-            await asyncio.to_thread(
-                upsert_chunk_embeddings,
-                collection_name,
-                embeddings,
-                chunks,
-            )
-            logger.info(
-                "qdrant indexed %s vectors in collection %s",
-                len(embeddings),
-                collection_name,
-            )
 
+def _load_url(payload: dict) -> list[Document]:
+    url = payload.get("url")
+    if not url:
+        raise ValueError("'url' field is missing or empty")
+    return WebBaseLoader(url).load()
+
+
+# ── Registry ──────────────────────────────────────────────────────────────────
+# To add a new source: implement a loader above, then add one line here.
+
+SOURCE_HANDLERS: dict[str, SourceLoader] = {
+    "pdf": _load_pdf,
+    "text": _load_text,
+    "url": _load_url,
+}
+
+
+# ── Shared pipeline ───────────────────────────────────────────────────────────
 
 def split_into_chunks(
     documents: list[Document],
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
 ) -> list[Document]:
-    text_splitter = RecursiveCharacterTextSplitter(
+    splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         length_function=len,
         separators=["\n\n", "\n", ". ", " ", ""],
     )
-    chunks = text_splitter.split_documents(documents)
-    logger.info(
-        "split %s documents into %s chunks",
-        len(documents),
-        len(chunks),
-    )
+    chunks = splitter.split_documents(documents)
+    logger.info("split %d documents into %d chunks", len(documents), len(chunks))
     return chunks
+
+
+async def _index_chunks(chunks: list[Document]) -> None:
+    """Embed chunks and upsert them into a new Qdrant collection."""
+    embeddings = await execute_embedding(chunks)
+    logger.debug("embeddings shape %s", getattr(embeddings, "shape", None))
+
+    if embeddings is None or len(embeddings) == 0:
+        logger.warning("no embeddings produced — skipping upsert")
+        return
+
+    collection_name = str(uuid.uuid4())
+    vector_size = int(embeddings.shape[1])
+
+    await asyncio.to_thread(create_collection_for_ingestion, collection_name, vector_size)
+    await asyncio.to_thread(upsert_chunk_embeddings, collection_name, embeddings, chunks)
+
+    logger.info("qdrant indexed %d vectors in collection %s", len(embeddings), collection_name)
+
+
+# ── Message handler ───────────────────────────────────────────────────────────
+
+async def handle_ingestion_message(message: AbstractIncomingMessage) -> None:
+    async with message.process():
+        raw = message.body.decode("utf-8", errors="replace")
+
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.info("ingestion rk=%s non_json_body=%s", message.routing_key, raw[:500])
+            return
+
+        logger.info("ingestion rk=%s payload=%s", message.routing_key, payload)
+
+        source = payload.get("source")
+        loader = SOURCE_HANDLERS.get(source)
+
+        if loader is None:
+            logger.error("ingestion unknown source: %r (registered: %s)", source, list(SOURCE_HANDLERS))
+            return
+
+        try:
+            # Loaders may be sync or async — handle both transparently
+            result = loader(payload)
+            documents: list[Document] = await result if asyncio.iscoroutine(result) else result
+        except (ValueError, KeyError) as exc:
+            logger.error("ingestion loader error [source=%s]: %s", source, exc)
+            return
+
+        logger.info("ingestion [source=%s] loaded %d documents", source, len(documents))
+
+        chunks = split_into_chunks(documents)
+        if not chunks:
+            logger.warning("no chunks produced — skipping embedding")
+            return
+
+        logger.debug("first chunk preview: %s", chunks[0].page_content[:200])
+        await _index_chunks(chunks)
