@@ -8,15 +8,15 @@ from fastapi import HTTPException, UploadFile
 def ensure_at_least_one_source(
     *,
     file: UploadFile | None,
-    website_url: str | None,
+    url: str | None,
     text: str | None,
     database_url: str | None,
 ) -> None:
     has_file = file is not None and bool(file.filename)
-    if not any([has_file, website_url, text, database_url]):
+    if not any([has_file, url, text, database_url]):
         raise HTTPException(
             status_code=400,
-            detail="Provide a PDF file, website_url, text, or database_url.",
+            detail="Provide a PDF file, url, text, or database_url.",
         )
 
 
@@ -37,7 +37,7 @@ def ensure_pdf(file: UploadFile) -> None:
 async def build_ingest_payload(
     *,
     file: UploadFile | None,
-    website_url: str | None,
+    url: str | None,
     text: str | None,
     database_url: str | None,
     upload_dir: Path,
@@ -60,10 +60,13 @@ async def build_ingest_payload(
         payload["stored_path"] = str(dest.resolve())
         payload["original_filename"] = file.filename
         payload["size_bytes"] = len(data)
-    if website_url:
-        payload["website_url"] = website_url
-    if text:
+    elif url:
+        payload["source"] = "url"
+        payload["url"] = url
+    elif text:
+        payload["source"] = "text"
         payload["text"] = text
-    if database_url:
+    elif database_url:
+        payload["source"] = "database_url"
         payload["database_url"] = database_url
     return payload

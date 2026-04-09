@@ -19,20 +19,20 @@ async def upload(
         UploadFile | None,
         File(description="PDF file to ingest"),
     ] = None,
-    website_url: Annotated[str | None, Form()] = None,
+    url: Annotated[str | None, Form()] = None,
     text: Annotated[str | None, Form()] = None,
     database_url: Annotated[str | None, Form()] = None,
 ) -> ApiResponse:
     ensure_at_least_one_source(
         file=file,
-        website_url=website_url,
+        url=url,
         text=text,
         database_url=database_url,
     )
     settings = get_settings()
     payload = await build_ingest_payload(
         file=file,
-        website_url=website_url,
+        url=url,
         text=text,
         database_url=database_url,
         upload_dir=settings.upload_dir,
