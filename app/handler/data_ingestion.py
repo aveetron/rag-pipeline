@@ -59,6 +59,7 @@ SOURCE_HANDLERS: dict[str, SourceLoader] = {
     "pdf": _load_pdf,
     "text": _load_text,
     "url": _load_url,
+    # TODO: need to implement database.
 }
 
 
