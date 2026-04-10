@@ -10,13 +10,13 @@ def ensure_at_least_one_source(
     file: UploadFile | None,
     url: str | None,
     text: str | None,
-    database_url: str | None,
+    db: str | None,
 ) -> None:
     has_file = file is not None and bool(file.filename)
-    if not any([has_file, url, text, database_url]):
+    if not any([has_file, url, text, db]):
         raise HTTPException(
             status_code=400,
-            detail="Provide a PDF file, url, text, or database_url.",
+            detail="Provide a PDF file, url, text, or db.",
         )
 
 
@@ -39,12 +39,22 @@ async def build_ingest_payload(
     file: UploadFile | None,
     url: str | None,
     text: str | None,
-    database_url: str | None,
+    db: str | None,
     upload_dir: Path,
     max_bytes: int,
 ) -> dict[str, Any]:
-    """Build JSON-serializable payload for the ingestion queue."""
+    # Normalize — treat blank, whitespace-only, or placeholder strings as None
+    url = url.strip() if url else None
+    text = text.strip() if text else None
+    db = db.strip() if db else None
+
+    # Discard Swagger placeholder default values
+    url = None if url in (None, "string", "null") else url
+    text = None if text in (None, "string", "null") else text
+    db = None if db in (None, "string", "null") else db
+
     payload: dict[str, Any] = {}
+
     if file is not None and file.filename:
         ensure_pdf(file)
         data = await file.read()
@@ -60,13 +70,16 @@ async def build_ingest_payload(
         payload["stored_path"] = str(dest.resolve())
         payload["original_filename"] = file.filename
         payload["size_bytes"] = len(data)
+    elif db:
+        payload["source"] = "db"
+        payload["db"] = db
     elif url:
         payload["source"] = "url"
         payload["url"] = url
     elif text:
         payload["source"] = "text"
         payload["text"] = text
-    elif database_url:
-        payload["source"] = "database_url"
-        payload["database_url"] = database_url
+    else:
+        raise HTTPException(status_code=400, detail="Provide a PDF file, url, text, or db.")
+
     return payload
