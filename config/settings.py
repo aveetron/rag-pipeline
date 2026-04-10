@@ -73,6 +73,10 @@ class Settings(BaseSettings):
         default=12000,
         validation_alias=AliasChoices("MAX_RAG_CONTEXT_CHARS", "max_rag_context_chars"),
     )
+    cors_origins: str = Field(
+        default="http://localhost:5173",
+        validation_alias=AliasChoices("CORS_ORIGINS", "cors_origins"),
+    )
 
 
 @lru_cache

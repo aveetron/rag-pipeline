@@ -1,3 +1,6 @@
+from langchain_community.utilities.sql_database import SQLDatabase
+from langchain_community.document_loaders import SQLDatabaseLoader
+import os
 import asyncio
 import json
 import logging
@@ -51,6 +54,44 @@ def _load_url(payload: dict) -> list[Document]:
         raise ValueError("'url' field is missing or empty")
     return WebBaseLoader(url).load()
 
+SUPPORTED_DIALECTS = ("sqlite", "postgresql", "mysql", "mariadb", "mssql", "oracle")
+
+def _load_db(payload: dict) -> list[Document]:
+    db_uri = payload.get("db")
+    if not db_uri:
+        raise ValueError("'db' field is missing or empty")
+
+    dialect = db_uri.split("://")[0].split("+")[0].lower()
+    if dialect not in SUPPORTED_DIALECTS:
+        raise ValueError(f"Unsupported dialect '{dialect}'. Supported: {SUPPORTED_DIALECTS}")
+
+    db = SQLDatabase.from_uri(db_uri)
+    tables = db.get_usable_table_names()
+
+    if not tables:
+        raise ValueError(f"No usable tables found in database: {db_uri}")
+
+    logger.info("_load_db found %d tables: %s", len(tables), tables)
+
+    all_docs = []
+
+    for table in tables:
+        loader = SQLDatabaseLoader(
+            query=f'SELECT * FROM "{table}"',
+            db=db,
+            page_content_mapper=lambda row, t=table: str(row),
+            metadata_mapper=lambda row, t=table, uri=db_uri, d=dialect: {
+                "table": t,
+                "source": uri,
+                "dialect": d,
+            },
+        )
+        docs = loader.load()
+        logger.info("_load_db table=%s loaded %d docs", table, len(docs))
+        all_docs.extend(docs)
+
+    logger.info("_load_db total=%d documents", len(all_docs))
+    return all_docs
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 # To add a new source: implement a loader above, then add one line here.
@@ -59,6 +100,7 @@ SOURCE_HANDLERS: dict[str, SourceLoader] = {
     "pdf": _load_pdf,
     "text": _load_text,
     "url": _load_url,
+    "db": _load_db,
 }
 
 

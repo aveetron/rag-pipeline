@@ -21,20 +21,20 @@ async def upload(
     ] = None,
     url: Annotated[str | None, Form()] = None,
     text: Annotated[str | None, Form()] = None,
-    database_url: Annotated[str | None, Form()] = None,
+    db: Annotated[str | None, Form()] = None,
 ) -> ApiResponse:
     ensure_at_least_one_source(
         file=file,
         url=url,
         text=text,
-        database_url=database_url,
+        db=db,
     )
     settings = get_settings()
     payload = await build_ingest_payload(
         file=file,
         url=url,
         text=text,
-        database_url=database_url,
+        db=db,
         upload_dir=settings.upload_dir,
         max_bytes=settings.max_upload_bytes,
     )
